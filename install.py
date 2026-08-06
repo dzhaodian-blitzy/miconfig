@@ -180,6 +180,26 @@ def init_submodules() -> None:
         sys.exit(1)
 
 
+# The command each installed config exists to configure, and how to get it.
+# Linking a config for a tool that isn't installed yet is harmless — the tool
+# may arrive later — so a miss is reported, not fatal. Without this, a machine
+# whose package phase never ran gets a fully "successful" install of configs
+# for editors it does not have.
+CONFIG_TOOLS = {
+    "nvim": "brew install neovim   (or ./setup.sh --phase 1)",
+}
+
+
+def check_tools() -> None:
+    missing = [tool for tool in CONFIG_TOOLS if not shutil.which(tool)]
+    if not missing:
+        return
+    print("\n=== tool check ===", flush=True)
+    for tool in missing:
+        print(f"  warning: {tool} is not on PATH — its config is installed but unused")
+        print(f"           install it with: {CONFIG_TOOLS[tool]}", flush=True)
+
+
 def main() -> None:
     setup_git()
     init_submodules()
@@ -202,6 +222,7 @@ def main() -> None:
             failed.append(installer.relative_to(HERE))
 
     install_commands()
+    check_tools()
 
     print()
     if failed:
