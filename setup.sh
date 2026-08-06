@@ -14,7 +14,10 @@ PYTHON_VERSIONS=("3.12" "3.13")
 PYTHON_GLOBAL="3.13"
 NODE_VERSION="--lts"
 ZSH_THEME="xiong-chiamiov-plus"
-GIT_EMAIL="michael@blitzy.com"
+# Email used as the generated SSH key's comment. Left empty on purpose: it is
+# resolved per-machine (env var → git config → prompt) so the key is never
+# labelled with someone else's address. Override with GIT_EMAIL=... ./setup.sh
+GIT_EMAIL="${GIT_EMAIL:-}"
 
 # ─── Helpers ──────────────────────────────────────────────────────────
 OS="$(uname -s)"
@@ -46,6 +49,31 @@ skip() { echo "  · $1 (already installed)"; }
 fail() { echo "  ✗ $1" >&2; }
 
 has() { command -v "$1" &>/dev/null; }
+
+# Resolve the email to stamp on the generated SSH key.
+resolve_git_email() {
+  if [ -n "$GIT_EMAIL" ]; then
+    echo "$GIT_EMAIL"
+    return
+  fi
+  local configured=""
+  if has git; then
+    configured="$(git config --global user.email 2>/dev/null || true)"
+  fi
+  if [ -n "$configured" ]; then
+    echo "$configured"
+    return
+  fi
+  if [ -t 0 ]; then
+    local answer=""
+    read -r -p "  Email for the SSH key comment: " answer
+    if [ -n "$answer" ]; then
+      echo "$answer"
+      return
+    fi
+  fi
+  echo "$USER@$(hostname -s)"
+}
 
 # cross-platform sed in-place (BSD vs GNU)
 sedi() {
@@ -370,13 +398,32 @@ ZSHEOF
     skip ".zshrc integrations"
   fi
 
+  # Guarded separately from the block above so machines that already ran an
+  # older setup.sh (and therefore skip that block) still pick this up.
+  # `make install` symlinks bin/ commands into ~/.local/bin, which is not on
+  # PATH by default on macOS or Ubuntu.
+  if ! grep -q '# miconfig-managed: user bin PATH' "$HOME/.zshrc" 2>/dev/null; then
+    cat >> "$HOME/.zshrc" << 'PATHEOF'
+
+# miconfig-managed: user bin PATH — make install links commands into ~/.local/bin
+export PATH="$HOME/.local/bin:$HOME/bin:$PATH"
+PATHEOF
+    ok "~/.local/bin and ~/bin on PATH"
+  else
+    skip "~/.local/bin on PATH"
+  fi
+
   # SSH key
+  GIT_EMAIL="$(resolve_git_email)"
   if [ ! -f "$HOME/.ssh/id_ed25519" ]; then
+    mkdir -p "$HOME/.ssh"
+    chmod 700 "$HOME/.ssh"
     ssh-keygen -t ed25519 -C "$GIT_EMAIL" -f "$HOME/.ssh/id_ed25519" -N ""
-    ok "SSH key"
+    ok "SSH key ($GIT_EMAIL)"
   else
     skip "SSH key"
   fi
+
 fi
 
 # ─── Phase 5: Directories & dotfiles ─────────────────────────────────
@@ -468,8 +515,25 @@ echo ""
 echo "  SSH public key:"
 cat "$HOME/.ssh/id_ed25519.pub" 2>/dev/null || echo "  (none generated)"
 echo ""
-echo "  Add to GitHub: https://github.com/settings/ssh/new"
-echo "  Then run: make install"
+
+# The submodules are cloned over SSH, so `make install` cannot work until this
+# key is registered on GitHub. Check it here rather than failing later.
+# `ssh -T git@github.com` exits 1 even when auth succeeds (GitHub declines to
+# give a shell), so capture the greeting and match on it rather than piping —
+# `set -o pipefail` would otherwise report every success as a failure.
+ssh_probe="$(ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=5 \
+  -T git@github.com 2>&1 || true)"
+if [[ "$ssh_probe" == *"successfully authenticated"* ]]; then
+  ok "GitHub SSH authentication"
+  echo ""
+  echo "  Next: make install"
+else
+  fail "GitHub SSH authentication is not working yet"
+  echo ""
+  echo "  1. Add the public key above to GitHub: https://github.com/settings/ssh/new"
+  echo "  2. Verify:  ssh -T git@github.com"
+  echo "  3. Then:    make install"
+fi
 echo ""
 if [[ "$OS" == "Linux" ]]; then
   echo "  Log out and back in for docker group + zsh to take effect."
