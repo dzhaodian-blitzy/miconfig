@@ -50,6 +50,17 @@ fail() { echo "  ✗ $1" >&2; }
 
 has() { command -v "$1" &>/dev/null; }
 
+# Gate for phases that genuinely need root. Says so out loud when it declines:
+# a phase disappearing silently is what let a fresh machine report success with
+# none of its tools installed.
+have_sudo() {
+  if [[ "$HAS_SUDO" == true ]]; then
+    return 0
+  fi
+  fail "requires sudo — skipped"
+  return 1
+}
+
 # Resolve the email to stamp on the generated SSH key.
 resolve_git_email() {
   if [ -n "$GIT_EMAIL" ]; then
@@ -84,17 +95,35 @@ sedi() {
   fi
 }
 
-# ─── Phase 1: System packages (requires sudo) ───────────────────────
-if phase 1 "System packages" && [[ "$HAS_SUDO" == true ]]; then
+# ─── Phase 1: System packages (sudo only needed on Linux) ───────────
+# Homebrew is a prerequisite on macOS (see README), not something this script
+# installs. Installing formulae through it needs no privileges, so this half is
+# not gated on HAS_SUDO — gating it would leave non-admin accounts (the agent-*
+# guests guest.sh creates) with no tools at all.
+if phase 1 "System packages"; then
   if [[ "$OS" == "Darwin" ]]; then
+    # Homebrew can be installed yet absent from PATH, since it relies on the
+    # user's shell profile for that and a guest account's is not wired up.
     if ! has brew; then
-      echo "  Installing Homebrew..."
-      /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-      ok "Homebrew"
-    else
-      skip "Homebrew"
+      for brew_bin in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if [ -x "$brew_bin" ]; then
+          eval "$("$brew_bin" shellenv)"
+          break
+        fi
+      done
     fi
-    brew bundle --no-lock --file=/dev/stdin <<BREWEOF
+
+    if has brew; then
+      skip "Homebrew"
+    else
+      fail "Homebrew not found — install it from https://brew.sh, then re-run"
+    fi
+  fi
+
+  if [[ "$OS" == "Darwin" ]] && has brew; then
+    # No --no-lock: Homebrew dropped lockfiles, and passing it is a hard error
+    # on current versions, which aborted this phase before installing anything.
+    brew bundle --file=/dev/stdin <<BREWEOF
 brew "git"
 brew "curl"
 brew "wget"
@@ -118,6 +147,9 @@ brew "k3d"
 brew "kubectl"
 BREWEOF
     ok "Homebrew packages"
+
+  elif [[ "$OS" == "Linux" && "$HAS_SUDO" != true ]]; then
+    fail "apt packages need sudo — skipped (re-run from an account with sudo)"
 
   elif [[ "$OS" == "Linux" ]]; then
     sudo apt-get update -qq
@@ -148,7 +180,7 @@ BREWEOF
 fi
 
 # ─── Phase 2: Docker + cloud tools (Linux only, requires sudo) ───────
-if phase 2 "Docker & cloud tools" && [[ "$HAS_SUDO" == true ]]; then
+if phase 2 "Docker & cloud tools" && have_sudo; then
   if [[ "$OS" == "Linux" ]]; then
     # Docker
     if ! has docker; then
@@ -493,7 +525,7 @@ JOURNALEOF
 fi
 
 # ─── Phase 6: Snaps (Linux only, requires sudo) ─────────────────────
-if phase 6 "Desktop apps" && [[ "$HAS_SUDO" == true ]]; then
+if phase 6 "Desktop apps" && have_sudo; then
   if [[ "$OS" == "Linux" ]] && has snap; then
     for app in firefox spotify; do
       snap list "$app" &>/dev/null && skip "$app" && continue
