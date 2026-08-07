@@ -129,6 +129,10 @@ brew "curl"
 brew "wget"
 brew "zsh"
 brew "neovim"
+# nvim-treesitter's v1 API shells out to the tree-sitter CLI to build parsers.
+# Homebrew's "tree-sitter" formula (a neovim dependency) ships only the library,
+# so without this every parser fails to compile and highlighting silently dies.
+brew "tree-sitter-cli"
 brew "tmux"
 brew "htop"
 brew "bat"

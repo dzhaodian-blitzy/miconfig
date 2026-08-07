@@ -6,7 +6,7 @@
 
 Found while installing miconfig on a fresh Mac. `make setup` succeeded, `make install`
 printed warnings, exited clean, and installed nothing — no Neovim config, no Claude
-skills, and, as it turned out, none of the command-line tools either. Seven defects
+skills, and, as it turned out, none of the command-line tools either. Eight defects
 contributed, spread across `setup.sh` and `install.py`, plus one stale submodule pin.
 
 A common theme: each failure was reported as a warning or a silent skip, so the
@@ -57,6 +57,12 @@ observed — the machine that prompted this write-up already had `~/.ssh`.
 is rejected outright by current Homebrew, which removed lockfiles, so the package phase
 aborted on its first command even on an admin account. The flag was dropped; it is
 redundant on every supported version.
+
+**8. The Neovim config's syntax highlighting could never work.** `nvim-treesitter`'s
+current API shells out to the `tree-sitter` CLI to compile parsers. Homebrew's
+`tree-sitter` formula arrives as a Neovim dependency but ships only the library, not
+the CLI, and nothing installed the CLI — so every parser failed to compile and
+highlighting fell back to Vim's regex engine. Added to the package list.
 
 ## nvim submodule pin
 
